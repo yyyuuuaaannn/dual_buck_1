@@ -7,7 +7,7 @@
 #include "PID.h"
 #include "Serial.h"
 
-uint8_t RX_Data[6];		//RX_Data [0~3]=Data [4]=AddressNumber [5]=Flag
+uint8_t RX_Data[6];		//RX_Data [3:0]=Data [4]=AddressNumber [5]=Flag=0xAF
 float * RX_Addr[7];
 Serial_TX_Buffer_Typedef Serial_TX_Buffer={{0},{0x00, 0x00, 0x80, 0x7f}};
 //Serial_RX_Buffer_Typedef Serial_RX_Buffer; //not used

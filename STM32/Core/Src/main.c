@@ -39,17 +39,17 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define HRTIM1_MASTER_TIMER_PERIOD 57600
-#define PHASE_SHIFT 14400
+#define PHASE_SHIFT 28800
 #define MAX_VOLTAGE ((float)42.3)
 #define BASE_VOLTAGE ((float)18.5)
 #define VOLTAGE_OUT_LINEAR_A (0.0102601752)
 #define VOLTAGE_OUT_LINEAR_B (0.5932726908)
-#define CURRENT_OUT_LINEAR_A (-0.004751058)
-#define CURRENT_OUT_LINEAR_B (12.48739301)
-#define CURRENT_IN_LINEAR_A (-0.005096203)
-#define CURRENT_IN_LINEAR_B (13.41522621)
-#define CURRENT_ADC_FILTER 30
-#define VOLTAGE_OFFSET 0.5
+#define CURRENT_1_LINEAR_A (-0.004751058)
+#define CURRENT_1_LINEAR_B (12.48739301)
+#define CURRENT_OUT_LINEAR_A (-0.005096203)
+#define CURRENT_OUT_LINEAR_B (13.41522621)
+#define CURRENT_ADC_FILTER 5
+//#define VOLTAGE_OFFSET 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,25 +60,25 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-extern uint8_t RX_Data[6];		//RX_Data [0~3]=Data [4]=AddressNumber [5]=Flag
+extern uint8_t RX_Data[6];		//RX_Data [3:0]=Data [4]=AddressNumber [5]=Flag=0xAF
 extern float * RX_Addr[7];
 PID pid_voltage, pid_current;
 extern Serial_TX_Buffer_Typedef Serial_TX_Buffer;
 //extern Serial_RX_Buffer_Typedef Serial_RX_Buffer;		//not used
-uint16_t ADC_Buffer[4];
+uint16_t ADC_Buffer[3];
 float duty1, duty2;
-float Voltage_Out_Set = 5;
+float Voltage_Out_Set = 8;
+float ctrl_1 = 8;
+float ctrl_2 = 8;
 float Voltage_Out;
-float Voltage_In;
-float ctrl = 5;
-float Current_Out, Current_In;
-float Current_Out_Set, Current_In_Set;
+float Current_Out, Current_1, Current_2;
+float Current_2_Set;
 uint8_t mode;
 float mode_f;
+float Current_Ratio = 1;
 /*
-mode = 0: output voltage
-mode = 1: output current
-mode = 2: input current
+mode = 0: voltage PID adjust
+mode = 1: current PID adjust
 */
 uint8_t mode_changed_flag;
 
@@ -128,20 +128,19 @@ int main(void)
   MX_HRTIM1_Init();
   MX_ADC1_Init();
   MX_TIM3_Init();
-  MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 	HAL_Delay(200);
-	HAL_ADC_Start_DMA(&hadc1,(uint32_t *)ADC_Buffer,sizeof(uint16_t)*4);
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t *)ADC_Buffer,sizeof(uint16_t)*3);
 
-	RX_Addr[0] = &Voltage_Out_Set;
+	RX_Addr[0] = &Current_Ratio;
 	RX_Addr[1] = &(pid_voltage.kp);
 	RX_Addr[2] = &(pid_voltage.ki);
 	RX_Addr[3] = &(pid_voltage.kd);
 	RX_Addr[4] = &mode_f;
-	RX_Addr[5] = &Current_Out_Set;
-	RX_Addr[6] = &Current_In_Set;
+	RX_Addr[5] = &Voltage_Out_Set;
 	
 	pid_voltage.kp=0.04;
 	pid_voltage.ki=0;
@@ -155,12 +154,12 @@ int main(void)
 	pid_current.max_integral=MAX_VOLTAGE;
 	pid_current.max_output=MAX_VOLTAGE;
 	
-	HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RX_Data, 6);
+	HAL_UARTEx_ReceiveToIdle_DMA(&huart1, RX_Data, 6);
 	
 	HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
 	HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B);
 	
-	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_MASTER, HRTIM_COMPAREUNIT_1, 28800);
+	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_MASTER, HRTIM_COMPAREUNIT_1, PHASE_SHIFT);
 	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, 14400);
 	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, 14400);
 	
@@ -218,7 +217,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_HRTIM1|RCC_PERIPHCLK_ADC12;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_HRTIM1|RCC_PERIPHCLK_USART1
+                              |RCC_PERIPHCLK_ADC12;
+  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK1;
   PeriphClkInit.Adc12ClockSelection = RCC_ADC12PLLCLK_DIV1;
   PeriphClkInit.Hrtim1ClockSelection = RCC_HRTIM1CLK_PLLCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -232,17 +233,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	static uint16_t Tx_Counter;
 	static uint16_t Current_ADC_Filter_Counter;
-	static uint32_t Current_Out_ADC_Buffer, Current_In_ADC_Buffer;
+	static uint32_t Current_Out_ADC_Buffer, Current_2_ADC_Buffer;
 	if(htim->Instance == TIM3)
 	{
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 		
 //		Voltage_Out = ADC_Buffer[0]*MAX_VOLTAGE/4095;
-		Voltage_Out = ADC_Buffer[0] * VOLTAGE_OUT_LINEAR_A + VOLTAGE_OUT_LINEAR_B;
-		Voltage_In = ADC_Buffer[1]*MAX_VOLTAGE/4095 + VOLTAGE_OFFSET;
+		Voltage_Out = ADC_Buffer[1] * VOLTAGE_OUT_LINEAR_A + VOLTAGE_OUT_LINEAR_B;
 		
 		Current_Out_ADC_Buffer += ADC_Buffer[2];
-		Current_In_ADC_Buffer += ADC_Buffer[3];
+		Current_2_ADC_Buffer += ADC_Buffer[0];
 		Current_ADC_Filter_Counter++;
 		if(Current_ADC_Filter_Counter == CURRENT_ADC_FILTER)
 		{
@@ -250,13 +250,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 //			Current_Out = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
 //			Current_In = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
 			Current_Out = (float)Current_Out_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_OUT_LINEAR_A + CURRENT_OUT_LINEAR_B;
-			Current_In = (float)Current_In_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_IN_LINEAR_A + CURRENT_IN_LINEAR_B;
-//			Current_Out = (float)Current_Out_ADC_Buffer / CURRENT_ADC_FILTER;
-//			Current_In = (float)Current_In_ADC_Buffer / CURRENT_ADC_FILTER;
+			Current_2 = (float)Current_2_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_1_LINEAR_A + CURRENT_1_LINEAR_B;
+
 			Current_Out_ADC_Buffer = 0;
-			Current_In_ADC_Buffer = 0;
+			Current_2_ADC_Buffer = 0;
 		}
-			
+		Current_1 = Current_Out - Current_2;
+
 		if(mode != (int)mode_f)
 		{
 			mode = mode_f;
@@ -270,7 +270,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				RX_Addr[2] = &(pid_voltage.ki);
 				RX_Addr[3] = &(pid_voltage.kd);
 			}		
-			if(mode == 1 || mode == 2)
+			if(mode == 1)
 			{
 				RX_Addr[1] = &(pid_current.kp);
 				RX_Addr[2] = &(pid_current.ki);
@@ -278,65 +278,38 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			}
 		}
 
-		if(mode == 0)
+		if(mode == 0 || mode == 1)
 		{
+			Current_2_Set = Current_1 * Current_Ratio;
+			
 			if(mode_changed_flag)
 			{
 				pid_voltage.last_error =	Voltage_Out_Set - Voltage_Out;
+				pid_current.last_error =	Current_2_Set - Current_2;
 				mode_changed_flag = 0;
 			}
 			
 			PID_Calc(&pid_voltage, Voltage_Out_Set - Voltage_Out);
-			ctrl += pid_voltage.output;
+			PID_Calc(&pid_current, Current_2_Set - Current_2);
+			ctrl_1 += pid_voltage.output;
+			ctrl_2 += pid_current.output;
 			
 //			ctrl = Voltage_Out_Set;  //***************************** TEST CODE *****************************
 			
-			LIMIT(ctrl, 0.5f, 2*MAX_VOLTAGE);
+			LIMIT(ctrl_1, 0.5f, 2*MAX_VOLTAGE);
+			LIMIT(ctrl_2, 0.5f, 2*MAX_VOLTAGE);
 		}
-		if(mode == 1)
-		{
-			if(mode_changed_flag)
-			{
-				pid_current.last_error =	Current_Out_Set - Current_Out;
-				mode_changed_flag = 0;
-			}
-			
-			PID_Calc(&pid_current, Current_Out_Set - Current_Out);
-			ctrl += pid_current.output;
-			
-			LIMIT(ctrl, 0.5f, 2*MAX_VOLTAGE);
-		}
-		if(mode == 2)
-		{
-			if(mode_changed_flag)
-			{
-				pid_current.last_error =	Current_In_Set - Current_In;
-				mode_changed_flag = 0;
-			}
-			
-			PID_Calc(&pid_current, Current_In_Set - Current_In);
-			ctrl += pid_current.output;
-			
-			LIMIT(ctrl, 0.5f, 2*MAX_VOLTAGE);
-		}			
+		
 
-		if(ctrl <= BASE_VOLTAGE)
-		{
-			duty2 = 0.05;
-			duty1 = ctrl / (BASE_VOLTAGE / (1-duty2) );
-			LIMIT(duty1, 0.05f, 0.95f);
-		}
-		else
-		{
-			duty1 = 0.95;
-			duty2 = 1 - (duty1 * BASE_VOLTAGE) / ctrl;
-			LIMIT(duty2, 0.05f, 0.57f);
-		}
+		duty1 = ctrl_1 / BASE_VOLTAGE;
+		duty2 = ctrl_2 / BASE_VOLTAGE;
+		LIMIT(duty1, 0.05f, 0.95f);	
+		LIMIT(duty2, 0.05f, 0.95f);			
 		
 		
 		
-		//__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
-		//__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);
+		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
+		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);
 		
 		
 		
@@ -349,27 +322,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			{
 				Serial_TX_Buffer.TX_Data[0] = Voltage_Out;
 				Serial_TX_Buffer.TX_Data[1] = Voltage_Out_Set;
-				Serial_TX_Buffer.TX_Data[2] = Current_Out;
-				Serial_TX_Buffer.TX_Data[3] = Current_In;
-//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[2];
-//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[3];
+				Serial_TX_Buffer.TX_Data[2] = Current_2;
+				Serial_TX_Buffer.TX_Data[3] = Current_1;
+//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[0];
+//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[1];
 			}
 			if(mode == 1)
 			{
-				Serial_TX_Buffer.TX_Data[0] = Current_Out;
-				Serial_TX_Buffer.TX_Data[1] = Current_Out_Set;
-				Serial_TX_Buffer.TX_Data[2] = Voltage_Out;
-				Serial_TX_Buffer.TX_Data[3] = ctrl;
-			}
-			if(mode == 2)
-			{
-				Serial_TX_Buffer.TX_Data[0] = Current_In;
-				Serial_TX_Buffer.TX_Data[1] = Current_In_Set;
-				Serial_TX_Buffer.TX_Data[2] = Voltage_Out;
-				Serial_TX_Buffer.TX_Data[3] = ctrl;
+				Serial_TX_Buffer.TX_Data[0] = Voltage_Out;
+				Serial_TX_Buffer.TX_Data[1] = Current_2_Set;
+				Serial_TX_Buffer.TX_Data[2] = Current_2;
+				Serial_TX_Buffer.TX_Data[3] = ctrl_2;
 			}
 			
-			HAL_UART_Transmit_DMA(&huart2,(uint8_t *)&Serial_TX_Buffer,sizeof(Serial_TX_Buffer));
+			HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&Serial_TX_Buffer,sizeof(Serial_TX_Buffer));
 		}
 		
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
