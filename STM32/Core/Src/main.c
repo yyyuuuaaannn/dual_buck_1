@@ -42,13 +42,13 @@
 #define PHASE_SHIFT 28800
 #define MAX_VOLTAGE ((float)42.3)
 #define BASE_VOLTAGE ((float)18.5)
-#define VOLTAGE_OUT_LINEAR_A (0.0102601752)
-#define VOLTAGE_OUT_LINEAR_B (0.5932726908)
-#define CURRENT_1_LINEAR_A (-0.004751058)
-#define CURRENT_1_LINEAR_B (12.48739301)
-#define CURRENT_OUT_LINEAR_A (-0.005096203)
-#define CURRENT_OUT_LINEAR_B (13.41522621)
-#define CURRENT_ADC_FILTER 5
+#define VOLTAGE_OUT_LINEAR_A (0.00336417157275)
+#define VOLTAGE_OUT_LINEAR_B (0)
+#define CURRENT_2_LINEAR_A (0.000826446281)
+#define CURRENT_2_LINEAR_B (0)
+#define CURRENT_OUT_LINEAR_A (0.001733102253)
+#define CURRENT_OUT_LINEAR_B (0)
+#define CURRENT_ADC_FILTER 1
 //#define VOLTAGE_OFFSET 0
 /* USER CODE END PD */
 
@@ -163,7 +163,7 @@ int main(void)
 	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, 14400);
 	__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, 14400);
 	
-	//HAL_TIM_Base_Start_IT(&htim3);
+	HAL_TIM_Base_Start_IT(&htim3);
 
   /* USER CODE END 2 */
 
@@ -250,7 +250,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 //			Current_Out = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
 //			Current_In = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
 			Current_Out = (float)Current_Out_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_OUT_LINEAR_A + CURRENT_OUT_LINEAR_B;
-			Current_2 = (float)Current_2_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_1_LINEAR_A + CURRENT_1_LINEAR_B;
+			Current_2 = (float)Current_2_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_2_LINEAR_A + CURRENT_2_LINEAR_B;
 
 			Current_Out_ADC_Buffer = 0;
 			Current_2_ADC_Buffer = 0;
@@ -307,7 +307,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		LIMIT(duty2, 0.05f, 0.95f);			
 		
 		
-		
 		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
 		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);
 		
@@ -321,11 +320,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			if(mode == 0)
 			{
 				Serial_TX_Buffer.TX_Data[0] = Voltage_Out;
-				Serial_TX_Buffer.TX_Data[1] = Voltage_Out_Set;
+				Serial_TX_Buffer.TX_Data[1] = Current_Out;
 				Serial_TX_Buffer.TX_Data[2] = Current_2;
 				Serial_TX_Buffer.TX_Data[3] = Current_1;
-//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[0];
-//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[1];
+//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[0];
+//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[1];
+//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[2];
 			}
 			if(mode == 1)
 			{
