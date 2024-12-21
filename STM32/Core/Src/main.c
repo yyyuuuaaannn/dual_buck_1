@@ -76,6 +76,11 @@ float Current_2_Set;
 uint8_t mode;
 float mode_f;
 float Current_Ratio = 1;
+
+uint32_t Pin13_Pressed_Counter;
+uint8_t Pin13_Pressed;
+uint32_t Pin14_Pressed_Counter;
+uint8_t Pin14_Pressed;
 /*
 mode = 0: voltage PID adjust
 mode = 1: current PID adjust
@@ -172,6 +177,48 @@ int main(void)
   while (1)
   {
 		
+		if(!HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13) && !Pin13_Pressed)
+		{
+			if(Pin13_Pressed_Counter==10000)
+			{
+				Current_Ratio += 0.5f;
+				LIMIT(Current_Ratio,0.5f,2);
+				
+				Pin13_Pressed = 1;
+			}
+			else
+				Pin13_Pressed_Counter++;
+		}
+		if(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13))
+		{
+			if(Pin13_Pressed && Pin13_Pressed_Counter)
+				Pin13_Pressed_Counter--;
+			if(Pin13_Pressed && !Pin13_Pressed_Counter)
+				Pin13_Pressed = 0;
+		}
+		
+		if(!HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14) && !Pin14_Pressed)
+		{
+			if(Pin14_Pressed_Counter==10000)
+			{
+				Current_Ratio -= 0.5f;
+				LIMIT(Current_Ratio,0.5f,2);
+				
+				Pin14_Pressed = 1;
+			}
+			else
+				Pin14_Pressed_Counter++;
+		}
+		if(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14))
+		{
+			if(Pin14_Pressed && Pin14_Pressed_Counter)
+				Pin14_Pressed_Counter--;
+			if(Pin14_Pressed && !Pin14_Pressed_Counter)
+				Pin14_Pressed = 0;
+		}
+		
+		
+		
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -234,29 +281,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	static uint16_t Tx_Counter;
 	static uint16_t Current_ADC_Filter_Counter;
 	static uint32_t Current_Out_ADC_Buffer, Current_2_ADC_Buffer;
+	static uint8_t sample_flag;
 	if(htim->Instance == TIM3)
 	{
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 		
-//		Voltage_Out = ADC_Buffer[0]*MAX_VOLTAGE/4095;
-		Voltage_Out = ADC_Buffer[1] * VOLTAGE_OUT_LINEAR_A + VOLTAGE_OUT_LINEAR_B;
-		
-		Current_Out_ADC_Buffer += ADC_Buffer[2];
-		Current_2_ADC_Buffer += ADC_Buffer[0];
-		Current_ADC_Filter_Counter++;
-		if(Current_ADC_Filter_Counter == CURRENT_ADC_FILTER)
-		{
-			Current_ADC_Filter_Counter = 0;
-//			Current_Out = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
-//			Current_In = ((float)ADC_Buffer[2]/4095*3.3-2.5)/-0.185;
-			Current_Out = (float)Current_Out_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_OUT_LINEAR_A + CURRENT_OUT_LINEAR_B;
-			Current_2 = (float)Current_2_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_2_LINEAR_A + CURRENT_2_LINEAR_B;
-
-			Current_Out_ADC_Buffer = 0;
-			Current_2_ADC_Buffer = 0;
-		}
-		Current_1 = Current_Out - Current_2;
-
 		if(mode != (int)mode_f)
 		{
 			mode = mode_f;
@@ -277,9 +306,32 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				RX_Addr[3] = &(pid_current.kd);
 			}
 		}
+		
+		if(!sample_flag)
+		{
+			Voltage_Out = ADC_Buffer[1] * VOLTAGE_OUT_LINEAR_A + VOLTAGE_OUT_LINEAR_B;
+		}
+		else
+		{
+			Current_Out_ADC_Buffer += ADC_Buffer[2];
+			Current_2_ADC_Buffer += ADC_Buffer[0];
+			Current_ADC_Filter_Counter++;
+			if(Current_ADC_Filter_Counter == CURRENT_ADC_FILTER)
+			{
+				Current_ADC_Filter_Counter = 0;
+				Current_Out = (float)Current_Out_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_OUT_LINEAR_A + CURRENT_OUT_LINEAR_B;
+				Current_2 = (float)Current_2_ADC_Buffer / CURRENT_ADC_FILTER * CURRENT_2_LINEAR_A + CURRENT_2_LINEAR_B;
 
+				Current_Out_ADC_Buffer = 0;
+				Current_2_ADC_Buffer = 0;
+			}
+			Current_1 = Current_Out - Current_2;
+		}
+		
+		
 		if(mode == 0 || mode == 1)
 		{
+			LIMIT(Current_Ratio,0.5f,5);
 			Current_2_Set = Current_1 * Current_Ratio;
 			
 			if(mode_changed_flag)
@@ -289,10 +341,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				mode_changed_flag = 0;
 			}
 			
-			PID_Calc(&pid_voltage, Voltage_Out_Set - Voltage_Out);
-			PID_Calc(&pid_current, Current_2_Set - Current_2);
-			ctrl_1 += pid_voltage.output;
-			ctrl_2 += pid_current.output;
+			if(!sample_flag)
+			{
+				PID_Calc(&pid_voltage, Voltage_Out_Set - Voltage_Out);
+				ctrl_1 += pid_voltage.output;
+			}
+			else
+			{
+				PID_Calc(&pid_current, Current_2_Set - Current_2);		
+				ctrl_2 += pid_current.output;
+			}
 			
 //			ctrl = Voltage_Out_Set;  //***************************** TEST CODE *****************************
 			
@@ -310,7 +368,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
 		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);
 		
-		
+		sample_flag = !sample_flag;
 		
 		Tx_Counter++;
 		if(Tx_Counter==300)
