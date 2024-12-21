@@ -48,7 +48,7 @@
 #define CURRENT_2_LINEAR_B (0)
 #define CURRENT_OUT_LINEAR_A (0.001733102253)
 #define CURRENT_OUT_LINEAR_B (0)
-#define CURRENT_ADC_FILTER 1
+#define CURRENT_ADC_FILTER 5
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -74,6 +74,7 @@ float Current_Out, Current_1, Current_2;
 float Current_2_Set;
 uint8_t mode;
 float mode_f;
+
 /*
 mode = 0: voltage PID adjust
 mode = 1: current PID adjust
@@ -87,8 +88,9 @@ uint8_t Pin13_Pressed;
 uint32_t Pin14_Pressed_Counter;
 uint8_t Pin14_Pressed;
 
-uint16_t overcurrent_counter;
-uint16_t output_test_counter;
+uint16_t pid_counter;
+uint32_t delay_counter=0x4FFFFF;
+uint32_t timer_counter;
 
 /* USER CODE END PV */
 
@@ -161,6 +163,8 @@ int main(void)
 	pid_current.kd=0.04;
 	pid_current.max_integral=MAX_VOLTAGE;
 	pid_current.max_output=MAX_VOLTAGE;
+	
+	for(;delay_counter;delay_counter--);
 	
 	HAL_UARTEx_ReceiveToIdle_DMA(&huart1, RX_Data, 6);
 	
@@ -285,7 +289,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	static uint16_t Current_ADC_Filter_Counter;
 	static uint32_t Current_Out_ADC_Buffer, Current_2_ADC_Buffer;
 	static uint8_t sample_flag;
-	if(htim->Instance == TIM3)
+	if(timer_counter==1)
+		HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
+	if(timer_counter)
+			timer_counter--;
+	if((htim->Instance == TIM3) && !timer_counter)
 	{
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 		
@@ -310,12 +318,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			}
 		}
 		
-		if(!sample_flag)
-		{
+
 			Voltage_Out = ADC_Buffer[1] * VOLTAGE_OUT_LINEAR_A + VOLTAGE_OUT_LINEAR_B;
-		}
-		else
-		{
+		
 			Current_Out_ADC_Buffer += ADC_Buffer[2];
 			Current_2_ADC_Buffer += ADC_Buffer[0];
 			Current_ADC_Filter_Counter++;
@@ -331,78 +336,63 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			if(Current_Out >= 4.5)
 			{
 				HAL_HRTIM_WaveformOutputStop(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
-				overcurrent_counter = 1000;
+
 				ctrl_1 = 0;
 				ctrl_2 = 0;
 				pid_voltage.integral = 0;
 				pid_current.integral = 0;
+				
+				timer_counter=2000;
 			}
-			if(output_test_counter && Current_Out >= 1)
-			{
-				HAL_HRTIM_WaveformOutputStop(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
-				overcurrent_counter = 1000;
-				output_test_counter = 0;
-			}
-			
-			if(overcurrent_counter==1)
-			{
-				output_test_counter=200;
-				__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, HRTIM1_MASTER_TIMER_PERIOD * 0.2);
-				__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, HRTIM1_MASTER_TIMER_PERIOD * 0.2);
-				HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
-			}
-			if(overcurrent_counter)
-				overcurrent_counter--;
-			if(output_test_counter)
-				output_test_counter--;
 			
 			Current_1 = Current_Out - Current_2;
-		}
-		
-		
-		if((mode == 0 || mode == 1) && !overcurrent_counter && !output_test_counter)
+
+		pid_counter++;
+		if(pid_counter==50)
 		{
-			LIMIT(Current_Ratio,0.5f,5);
-			Current_2_Set = Current_1 * Current_Ratio;
-			
-			if(mode_changed_flag)
+			pid_counter=0;
+			if(mode == 0 || mode == 1)
 			{
-				pid_voltage.last_error =	Voltage_Out_Set - Voltage_Out;
-				pid_current.last_error =	Current_2_Set - Current_2;
-				mode_changed_flag = 0;
+				LIMIT(Current_Ratio,0.5f,5);
+				Current_2_Set = Current_1 * Current_Ratio;
+				
+				if(mode_changed_flag)
+				{
+					pid_voltage.last_error =	Voltage_Out_Set - Voltage_Out;
+					pid_current.last_error =	Current_2_Set - Current_2;
+					mode_changed_flag = 0;
+				}
+				
+				if(!sample_flag)
+				{
+					PID_Calc(&pid_voltage, Voltage_Out_Set - Voltage_Out);
+					ctrl_1 += pid_voltage.output;
+				}
+				else
+				{
+					PID_Calc(&pid_current, Current_2_Set - Current_2);		
+					ctrl_2 += pid_current.output;
+				}
+				
+				LIMIT(ctrl_1, 0.5f, 2*MAX_VOLTAGE);
+				LIMIT(ctrl_2, 0.5f, 2*MAX_VOLTAGE);
+				
+				sample_flag = !sample_flag;
 			}
-			
-			if(!sample_flag)
-			{
-				PID_Calc(&pid_voltage, Voltage_Out_Set - Voltage_Out);
-				ctrl_1 += pid_voltage.output;
-			}
-			else
-			{
-				PID_Calc(&pid_current, Current_2_Set - Current_2);		
-				ctrl_2 += pid_current.output;
-			}
-			
-//			ctrl = Voltage_Out_Set;  //***************************** TEST CODE *****************************
-			
-			LIMIT(ctrl_1, 0.5f, 2*MAX_VOLTAGE);
-			LIMIT(ctrl_2, 0.5f, 2*MAX_VOLTAGE);
 		}
+
 		
-		if(!overcurrent_counter && !output_test_counter)
-		{
-			duty1 = ctrl_1 / BASE_VOLTAGE;
-			duty2 = ctrl_2 / BASE_VOLTAGE;
-			LIMIT(duty1, 0.05f, 0.95f);	
-			LIMIT(duty2, 0.05f, 0.95f);			
+		
+		duty1 = ctrl_1 / BASE_VOLTAGE;
+		duty2 = ctrl_2 / BASE_VOLTAGE;
+		LIMIT(duty1, 0.05f, 0.95f);	
+		LIMIT(duty2, 0.05f, 0.95f);			
 			
 			
-			__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
-			__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);	
-		}
+		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, duty1*HRTIM1_MASTER_TIMER_PERIOD);
+		__HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, duty2*HRTIM1_MASTER_TIMER_PERIOD);	
 		
 		
-		sample_flag = !sample_flag;
 		
 		Tx_Counter++;
 		if(Tx_Counter==300)
@@ -415,7 +405,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				Serial_TX_Buffer.TX_Data[1] = Current_Out;
 				Serial_TX_Buffer.TX_Data[2] = Current_2;
 				Serial_TX_Buffer.TX_Data[3] = Current_1;
-//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[0];
+//				Serial_TX_Buffer.TX_Data[1] = ADC_Buffer[0];
 //				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[1];
 //				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[2];
 			}
