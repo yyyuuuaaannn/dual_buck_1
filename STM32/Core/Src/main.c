@@ -42,12 +42,26 @@
 #define PHASE_SHIFT 28800
 #define MAX_VOLTAGE ((float)42.3)
 #define BASE_VOLTAGE ((float)18.5)
-#define VOLTAGE_OUT_LINEAR_A (0.00336417157275)
-#define VOLTAGE_OUT_LINEAR_B (0)
-#define CURRENT_2_LINEAR_A (0.000826446281)
-#define CURRENT_2_LINEAR_B (0)
-#define CURRENT_OUT_LINEAR_A (0.001733102253)
-#define CURRENT_OUT_LINEAR_B (0)
+	
+//#define VOLTAGE_OUT_LINEAR_A (0.0033305570987640057)
+//#define VOLTAGE_OUT_LINEAR_B (0.21870843158769424)
+//#define CURRENT_2_LINEAR_A (0.002148731754303638)
+//#define CURRENT_2_LINEAR_B (0.8282249499864162)
+//#define CURRENT_OUT_LINEAR_A (0.0023269263294578508)
+//#define CURRENT_OUT_LINEAR_B (0.8598060985656532)
+
+#define VOLTAGE_OUT_LINEAR_A (0.0033390484323447918)
+#define VOLTAGE_OUT_LINEAR_B (-0.000005710205944235251)
+//#define CURRENT_2_LINEAR_A (0.0007692307692307692)
+//#define CURRENT_2_LINEAR_B (0.03307692307692306)
+//#define CURRENT_OUT_LINEAR_A (0.0011830985915492914)
+//#define CURRENT_OUT_LINEAR_B (-0.020507042253516072)
+
+#define CURRENT_2_LINEAR_A (0.0008108108108108107)
+#define CURRENT_2_LINEAR_B (0.037027027027027204)
+#define CURRENT_OUT_LINEAR_A (0.001215226939970718)
+#define CURRENT_OUT_LINEAR_B (-0.012035139092241076)
+
 #define CURRENT_ADC_FILTER 5
 /* USER CODE END PD */
 
@@ -405,9 +419,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				Serial_TX_Buffer.TX_Data[1] = Current_Out;
 				Serial_TX_Buffer.TX_Data[2] = Current_2;
 				Serial_TX_Buffer.TX_Data[3] = Current_1;
-//				Serial_TX_Buffer.TX_Data[1] = ADC_Buffer[0];
-//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[1];
-//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[2];
+//				Serial_TX_Buffer.TX_Data[1] = ADC_Buffer[1];
+//				Serial_TX_Buffer.TX_Data[2] = ADC_Buffer[2];
+//				Serial_TX_Buffer.TX_Data[3] = ADC_Buffer[0];
 			}
 			if(mode == 1)
 			{
